@@ -10,22 +10,34 @@ namespace LeaderElection
 {
     internal class LeaderElectionService
     {
-        private Timer _acquireLockTimer;
-        readonly CancellationTokenSource _cts = new CancellationTokenSource();
+        readonly CancellationTokenSource _cts = new();
         private RedLockFactory _distributedLockFactory;
         private const string _resource = "the-thing-we-are-locking-on";
-        private const int _expirySecondsCount = 3;
+        private const int _expirySecondsCount = 10;
         private readonly TimeSpan _expiry = TimeSpan.FromSeconds(_expirySecondsCount);
+        private const int _retrySecondsCount = 3;
+        private readonly TimeSpan _retry = TimeSpan.FromSeconds(_retrySecondsCount);
 
-        public void Start()
+        public async Task Start()
         {
+            var endpoint = new RedLockEndPoint(new DnsEndPoint("localhost", 49153));
+            endpoint.Password = "redispw";
             var endPoints = new List<RedLockEndPoint>
             {
-                new DnsEndPoint("localhost", 6379)
+                endpoint
                 //todo add more redis
             };
             _distributedLockFactory = RedLockFactory.Create(endPoints);
-            _acquireLockTimer = new Timer(async state => await TryAcquireLock((CancellationToken)state), _cts.Token, 0, _expirySecondsCount * 1000);
+            try
+            {
+                await TryAcquireLock(_cts.Token);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e);
+                _distributedLockFactory.Dispose();
+                throw;
+            }
         }
 
         private async Task TryAcquireLock(CancellationToken token)
@@ -33,21 +45,24 @@ namespace LeaderElection
             if (token.IsCancellationRequested)
                 return;
 
-            var distributedLock = await _distributedLockFactory.CreateLockAsync(_resource, _expiry);
-            if (distributedLock.IsAcquired)
+            try
             {
-                DoLeaderJob();
-                _acquireLockTimer.Dispose(); //no need to renew lock because of autoextend
+                var distributedLock = await _distributedLockFactory.CreateLockAsync(
+                    _resource,
+                    _expiry,
+                    TimeSpan.MaxValue,
+                    _retry,
+                    token);
+                if (distributedLock.IsAcquired)
+                {
+                    DoLeaderJob();
+                }
             }
-            else
+            catch (Exception e)
             {
-                DoSlaveJob();
+                Console.WriteLine(e);
+                throw;
             }
-        }
-
-        private static void DoSlaveJob()
-        {
-            Console.WriteLine("ya cherv pidor huzhe menya net");
         }
 
         private static void DoLeaderJob()

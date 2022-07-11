@@ -1,13 +1,14 @@
 ﻿using System;
+using System.Threading.Tasks;
 
 namespace LeaderElection
 {
     class Program
     {
-        static void Main(string[] args)
+        static async Task Main(string[] args)
         {
             var electionService = new LeaderElectionService();
-            electionService.Start();
+            await electionService.Start();
             Console.ReadLine();
         }
     }
